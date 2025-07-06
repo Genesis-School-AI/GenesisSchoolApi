@@ -108,14 +108,16 @@ Question from student:
 """
 
     response = ollama.chat(
-        model="phi4-mini",
+       #  model="gemma:7b",
+       #  model="phi4-mini",
+        model="Mistral",
         messages=[
             {"role": "system", "content": "You are a helpful student assistant trained to explain academic content from class context only."},
             {"role": "user", "content": prompt_to_ai}
         ]
     )
 
-
+    print("AI prompt_to_ai:", prompt_to_ai)
     return response['message']['content']
 
 
