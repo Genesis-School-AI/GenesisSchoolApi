@@ -82,24 +82,42 @@ def qeury_database(query, k, roomId, yearId, subjectId):
 
 
 def gen_response(query, k, roomId, yearId, subjectId):
-
     retrived_docs = qeury_database(query, k, roomId, yearId, subjectId)
+    
+    if not retrived_docs:
+       return {"role": "ai", "content": "ไม่พบข้อมูลที่เกี่ยวข้อง"}
 
-    context = "\n".join(
-        [f"Content: {doc[1]}\nผู้สอน: {doc[4]} ({doc[5]})\nเวลาที่สอน/บันทึก: {doc[2]} {doc[3]}" for doc in retrived_docs])
+    context = "\n\n".join(
+        [f"Content: {doc[1]}\nผู้สอน: {doc[4]} ({doc[5]})\nเวลาที่สอน/บันทึก: {doc[2]} {doc[3]}" for doc in retrived_docs]
+    )
 
-    prompt_to_ai = f"""Use the following context to answer the question.\nContext : {context}\n\nQuestion : {query}"""
+    prompt_to_ai = f"""
+You are a friendly learning assistant that helps students understand academic content.
+
+- Only use the information provided in the context below. If the information is not found, reply with: "ไม่พบข้อมูลที่เกี่ยวข้อง".
+- Do not directly answer complex questions. Instead, guide the student step by step through questions and hints.
+- If the question is related to academic content (e.g. biology, physics), help the student think through the problem by asking follow-up questions.
+- Do not make assumptions or add new information that is not in the context.
+- If the student asks something outside the subject or context, politely redirect them.
+
+Context:
+{context}
+
+Question from student:
+{query}
+"""
 
     response = ollama.chat(
         model="phi4-mini",
         messages=[
-            {"role": "system", "content": "You are a student assistant who will summerize context from reccording class and answer shortly for less complicated."},
+            {"role": "system", "content": "You are a helpful student assistant trained to explain academic content from class context only."},
             {"role": "user", "content": prompt_to_ai}
         ]
     )
 
-    print("context:", context)
+
     return response['message']['content']
+
 
 
 cur = conn.cursor()

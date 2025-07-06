@@ -35,7 +35,7 @@ def read_root():
 @app.post("/fetch-response")
 def set_data(request: SetDataRequest):
     return {
-        "message": qeury_database(request.prompt, request.k, request.room_id, request.year_id, request.subject_id),
+       #  "message": qeury_database(request.prompt, request.k, request.room_id, request.year_id, request.subject_id),
         "k": request.k,
         "data": gen_response(request.prompt, request.k, request.room_id, request.year_id, request.subject_id) if request.prompt else "No prompt provided"
     }
