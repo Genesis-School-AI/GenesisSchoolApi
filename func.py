@@ -5,6 +5,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 import ollama
 from sentence_transformers import SentenceTransformer, util
 from datetime import datetime, time
+import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  
 
 # Step 2: Connect to MySQL
 conn = pymysql.connect(
@@ -83,9 +88,9 @@ def qeury_database(query, k, roomId, yearId, subjectId):
 
 def gen_response(query, k, roomId, yearId, subjectId):
     retrived_docs = qeury_database(query, k, roomId, yearId, subjectId)
-    
+
     if not retrived_docs:
-       return {"role": "ai", "content": "ไม่พบข้อมูลที่เกี่ยวข้อง"}
+        return {"role": "ai", "content": "ไม่พบข้อมูลที่เกี่ยวข้อง"}
 
     context = "\n\n".join(
         [f"Content: {doc[1]}\nผู้สอน: {doc[4]} ({doc[5]})\nเวลาที่สอน/บันทึก: {doc[2]} {doc[3]}" for doc in retrived_docs]
@@ -108,8 +113,8 @@ Question from student:
 """
 
     response = ollama.chat(
-       #  model="gemma:7b",
-       #  model="phi4-mini",
+        #  model="gemma:7b",
+        #  model="phi4-mini",
         model="Mistral",
         messages=[
             {"role": "system", "content": "You are a helpful student assistant trained to explain academic content from class context only."},
@@ -120,6 +125,62 @@ Question from student:
     print("AI prompt_to_ai:", prompt_to_ai)
     return response['message']['content']
 
+
+def gen_gemini(query, k, roomId, yearId, subjectId):
+    retrived_docs = qeury_database(query, k, roomId, yearId, subjectId)
+    api_key = os.getenv("APIKEYS")
+
+    if not retrived_docs:
+        return {"role": "ai", "content": "ไม่พบข้อมูลที่เกี่ยวข้อง"}
+
+    context = "\n\n".join(
+        [f"Content: {doc[1]}\nผู้สอน: {doc[4]} ({doc[5]})\nเวลาที่สอน/บันทึก: {doc[2]} {doc[3]}" for doc in retrived_docs]
+    )
+
+    prompt_to_ai = f"""
+You are a friendly learning assistant that helps students understand academic content.
+
+- Only use the information provided in the context below. If the information is not found, reply with: "ไม่พบข้อมูลที่เกี่ยวข้อง".
+- Do not directly answer complex questions. Instead, guide the student step by step through questions and hints.
+- If the question is related to academic content (e.g. biology, physics), help the student think through the problem by asking follow-up questions.
+- Do not make assumptions or add new information that is not in the context.
+- If the student asks something outside the subject or context, politely redirect them.
+
+Context:
+{context}
+
+Question from student:
+{query}
+"""
+
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "X-goog-api-key": api_key
+    }
+    data = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt_to_ai}
+                ]
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code != 200:
+        print("Error:", response.status_code, response.text)
+        return {"role": "ai", "content": "เกิดข้อผิดพลาดในการเรียกใช้ Gemini API"}
+
+    try:
+        result = response.json()
+        content = result["candidates"][0]["content"]["parts"][0]["text"]
+        return {"role": "ai", "content": content}
+    except Exception as e:
+        print("Parse Error:", e)
+        return {"role": "ai", "content": "ไม่สามารถประมวลผลคำตอบได้"}
 
 
 cur = conn.cursor()
@@ -179,5 +240,5 @@ def add_document(doc_data):
         )
     )
     conn.commit()
-    
+
     return "Document added successfully"
