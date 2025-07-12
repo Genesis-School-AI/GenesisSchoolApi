@@ -1,4 +1,4 @@
-import pymysql
+from supabase import create_client, Client
 import json
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
@@ -9,59 +9,75 @@ import requests
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  
+load_dotenv()
 
-# Step 2: Connect to MySQL
-conn = pymysql.connect(
-    host="localhost",
-    user="root",
-    password="",
-    database="toth",
-    port=3306
-)
-cur = conn.cursor()
+
+# Connect to Supabase
+SUPABASE_URL = os.getenv("PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("PUBLIC_SUPABASE_ANON_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+# System check function
+def check_system():
+    """
+    Fetches the 'setting' table and checks if the row with content='system' has status 'on'.
+    Returns True if system is available, otherwise returns a string message.
+    """
+    try:
+        response = supabase.table('setting').select(
+            'status').eq('content', 'system').limit(1).execute()
+        data = response.data if hasattr(
+            response, 'data') else response.get('data', [])
+        if data and data[0].get('status', '').lower() == 'on':
+            return True
+        elif data and data[0].get('status', '').lower() == 'off':
+            # return "system is not available please try again later or contact support"
+            return {"error": "off", "details": "ระบบอยู่ระหว่างการปรับปรุง กรุณาลองใหม่ภายหลังหรือติดต่อฝ่ายผู้ดูแลระบบ"}
+        else:
+            return {"error": "unknown", "details": "ระบบไม่พร้อมใช้งาน กรุณาลองใหม่ภายหลังหรือติดต่อฝ่ายผู้ดูแลระบบ"}
+    except Exception as e:
+        return {"error": "exception", "details": f"system check error: {e}"}
 
 
 def qeury_database(query, k, roomId, yearId, subjectId):
+    system_status = check_system()
+    if system_status is not True:
+        return system_status
 
     if k is None:
         k = 5
 
     embedder = SentenceTransformer('all-MiniLM-L6-v2')
-    # Step 1: Encode query
     query_embedding = np.array(embedder.encode(query)).reshape(1, -1)
 
-    # Step 3: Fetch filtered documents and their embeddings
-    where_conditions = []
-    params = []
-
+    # Build Supabase filter
+    filters = {}
     if roomId is not None:
-        where_conditions.append("student_room = %s")
-        params.append(roomId)
-
+        filters['student_room'] = roomId
     if yearId is not None:
-        where_conditions.append("student_year = %s")
-        params.append(yearId)
-
+        filters['student_year'] = yearId
     if subjectId is not None:
-        where_conditions.append("teacher_subject = %s")
-        params.append(subjectId)
+        filters['teacher_subject'] = subjectId
 
-    base_query = "SELECT content, embedding, created_at, time_of_record, teacher_name, teacher_subject, student_year, student_room FROM documents"
-
-    if where_conditions:
-        query_sql = base_query + " WHERE " + " AND ".join(where_conditions)
-        cur.execute(query_sql, params)
-    else:
-        cur.execute(base_query)
-
-    rows = cur.fetchall()
+    # Query Supabase
+    query_builder = supabase.table('documents').select(
+        "content, embedding, created_at, time_of_record, teacher_name, teacher_subject, student_year, student_room")
+    for key, value in filters.items():
+        query_builder = query_builder.eq(key, value)
+    response = query_builder.execute()
+    rows = response.data if hasattr(response, 'data') else response["data"]
 
     results = []
-
     for row in rows:
-        content, embedding_str, created_at, time_of_record, teacher_name, teacher_subject, student_year, student_room = row
-
+        content = row['content']
+        embedding_str = row['embedding']
+        created_at = row['created_at']
+        time_of_record = row['time_of_record']
+        teacher_name = row['teacher_name']
+        teacher_subject = row['teacher_subject']
+        student_year = row['student_year']
+        student_room = row['student_room']
         try:
             doc_embedding = np.array(json.loads(embedding_str)).reshape(1, -1)
             similarity = cosine_similarity(
@@ -79,15 +95,18 @@ def qeury_database(query, k, roomId, yearId, subjectId):
         except Exception as e:
             print(f"Error parsing embedding: {e}")
 
-    # Step 4: Sort results by similarity score (descending)
     results.sort(key=lambda x: x[0], reverse=True)
-
-    # Step 5: Return top k results
     return results[:k]
 
 
 def gen_response(query, k, roomId, yearId, subjectId):
+    system_status = check_system()
+    if system_status is not True:
+        return {"role": "ai", "content": system_status}
+
     retrived_docs = qeury_database(query, k, roomId, yearId, subjectId)
+    if isinstance(retrived_docs, str):
+        return {"role": "ai", "content": retrived_docs}
 
     if not retrived_docs:
         return {"role": "ai", "content": "ไม่พบข้อมูลที่เกี่ยวข้อง"}
@@ -127,7 +146,14 @@ Question from student:
 
 
 def gen_gemini(query, k, roomId, yearId, subjectId):
+    system_status = check_system()
+    if system_status is not True:
+        return {"role": "ai", "content": system_status}
+
     retrived_docs = qeury_database(query, k, roomId, yearId, subjectId)
+    if isinstance(retrived_docs, str):
+        return {"role": "ai", "content": retrived_docs}
+
     api_key = os.getenv("APIKEYS")
 
     if not retrived_docs:
@@ -185,32 +211,30 @@ Question and chat history from student:
         return {"role": "ai", "content": "ไม่สามารถประมวลผลคำตอบได้"}
 
 
-cur = conn.cursor()
-
 embedder = SentenceTransformer('all-MiniLM-L6-v2')
 
 
 def add_document(doc_data):
+    system_status = check_system()
+    if system_status is not True:
+        return system_status
+
     from datetime import datetime, time
 
     # Parse string datetime to datetime object
     if isinstance(doc_data['time_summit'], str):
-        # Parse ISO format string to datetime object
         time_summit = datetime.fromisoformat(
             doc_data['time_summit'].replace('Z', '+00:00'))
     else:
         time_summit = doc_data['time_summit']
 
-    # Parse string time to time object
     if isinstance(doc_data['time_of_record'], str):
-        # Parse time string (HH:MM:SS format)
         time_parts = doc_data['time_of_record'].split(':')
         time_of_record = time(int(time_parts[0]), int(time_parts[1]), int(
             time_parts[2]) if len(time_parts) > 2 else 0)
     else:
         time_of_record = doc_data['time_of_record']
 
-    # Step 1: Build context-rich text to embed
     context_text = (
         f"เนื้อหา: {doc_data['content']}\n"
         f"อาจารย์: {doc_data['teacher_name']} ({doc_data['teacher_subject']})\n"
@@ -219,28 +243,41 @@ def add_document(doc_data):
         f"ชั้นปี: ปี {doc_data['student_year']}, ห้อง {doc_data['student_room']}"
     )
 
-    # Step 2: Create embedding from this full context
     embedding = embedder.encode(context_text).tolist()
     embedding_json = json.dumps(embedding)
 
-    # Step 3: Save only original fields (use the parsed datetime objects)
-    cur.execute(
-        """
-        INSERT INTO `documents` 
-        (`content`, `embedding`, `created_at`, `time_of_record`, `teacher_name`, `teacher_subject`, `student_year`, `student_room`)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            doc_data["content"],
-            embedding_json,
-            time_summit.date(),  # Convert to date for MySQL
-            time_of_record,
-            doc_data["teacher_name"],
-            doc_data["teacher_subject"],
-            doc_data["student_year"],
-            doc_data["student_room"]
-        )
-    )
-    conn.commit()
-
+    # Insert into Supabase
+    insert_data = {
+        "content": doc_data["content"],
+        "embedding": embedding_json,
+        "created_at": time_summit.date().isoformat(),
+        "time_of_record": time_of_record.strftime('%H:%M:%S'),
+        "teacher_name": doc_data["teacher_name"],
+        "teacher_subject": doc_data["teacher_subject"],
+        "student_year": doc_data["student_year"],
+        "student_room": doc_data["student_room"]
+    }
+    response = supabase.table('documents').insert(insert_data).execute()
+    if hasattr(response, 'error') and response.error:
+        return f"Error adding document: {response.error}"
     return "Document added successfully"
+
+
+# check supabase db
+def check_database_status():
+    """
+    Checks the status of the Supabase database connection by attempting a simple select query.
+    Returns a dict with 'status' and 'details'.
+    """
+    try:
+        # Try to fetch 1 row from documents table
+        response = supabase.table('documents').select('id').execute()
+        # If response has data, connection is OK
+        if hasattr(response, 'data'):
+            return {"status": "ok", "details": f"Connected. Rows in documents: {len(response.data)}"}
+        elif isinstance(response, dict) and 'data' in response:
+            return {"status": "ok", "details": f"Connected. Rows in documents: {len(response['data'])}"}
+        else:
+            return {"status": "error", "details": str(response)}
+    except Exception as e:
+        return {"status": "error", "details": str(e)}

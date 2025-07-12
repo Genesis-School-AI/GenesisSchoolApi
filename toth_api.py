@@ -2,7 +2,7 @@ from typing import Union
 from pydantic import BaseModel
 from typing import Dict, Any
 # Ensure func.py is in the same directory or adjust the import path accordingly
-from func import gen_response, qeury_database, add_document , gen_gemini
+from func import gen_response, qeury_database, add_document , gen_gemini, check_database_status
 
 
 # run with
@@ -38,6 +38,9 @@ class AddDocumentRequest(BaseModel):
 def read_root():
     return {"Hello user": "toth is running pls use /fetch-response or /add-document"}
 
+@app.get("/health")
+def health_check():
+    return {"status" : check_database_status()}
 
 @app.post("/fetch-response")
 def set_data(request: SetDataRequest):
