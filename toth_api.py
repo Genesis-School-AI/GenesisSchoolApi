@@ -2,7 +2,7 @@ from typing import Union
 from pydantic import BaseModel
 from typing import Dict, Any
 # Ensure func.py is in the same directory or adjust the import path accordingly
-from func import gen_response, qeury_database, add_document , gen_gemini, check_database_status
+from func import gen_response, qeury_database, add_document , gen_gemini, check_database_status,school_data
 
 
 # run with
@@ -63,4 +63,11 @@ def set_data(request: AddDocumentRequest):
     return {
         "message": request.content,
         "content": add_document(request.content)
+    }
+    
+@app.get("/school-data")
+def fschool_data():
+    return {
+        "message": "This is a school data endpoint",
+        "data" : school_data()
     }
